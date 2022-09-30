@@ -1,8 +1,13 @@
 import { Component, OnInit } from '@angular/core';
 import { FormBuilder, FormControl, FormGroup, Validators } from '@angular/forms';
+import { Router } from '@angular/router';
 import { Country } from 'src/app/common/country';
+import { Order } from 'src/app/common/order';
+import { OrderItem } from 'src/app/common/order-item';
+import { Purchase } from 'src/app/common/purchase';
 import { State } from 'src/app/common/state';
 import { CartService } from 'src/app/services/cart.service';
+import { CheckoutService } from 'src/app/services/checkout.service';
 import { ECommerceFormService } from 'src/app/services/ecommerce-form.service';
 import { CustomValidators } from 'src/app/validators/custom-validators';
 
@@ -26,7 +31,9 @@ export class CheckoutComponent implements OnInit {
   
   constructor(private formBuilder : FormBuilder,
               private eCommerceFormService: ECommerceFormService,
-              private cartService: CartService) { }
+              private cartService: CartService,
+              private checkoutService: CheckoutService,
+              private router: Router) { }
 
   ngOnInit(): void {
     
@@ -149,12 +156,57 @@ export class CheckoutComponent implements OnInit {
   get creditCardSecurityCode() { return this.checkoutFormGroup.get('creditCard.securityCode'); }
   
   onSubmit() {
-    console.log("Handling the submit button");
-    console.log(this.checkoutFormGroup.get('customer')!.value);
-
+    
     if(this.checkoutFormGroup.invalid) {
       this.checkoutFormGroup.markAllAsTouched();
+      return;
     }
+
+    let order = new Order();
+    order.totalPrice = this.totalPrice;
+    order.totalQuantity = this.totalQuantity;
+
+    const cartItems = this.cartService.cartItems;
+
+    let orderItems: OrderItem[] = cartItems.map(tempCartItem => new OrderItem(tempCartItem));
+
+    let purchase = new Purchase();
+
+    purchase.customer = this.checkoutFormGroup.controls['customer'].value;
+
+    purchase.shippingAddress = this.checkoutFormGroup.controls['shippingAddress'].value;
+
+    const shippingCountry: Country = JSON.parse(JSON.stringify(purchase.shippingAddress.country));
+    purchase.shippingAddress.country = shippingCountry.name;
+
+    purchase.billingAddress = this.checkoutFormGroup.controls['billingAddress'].value;
+
+    const billingCountry: Country = JSON.parse(JSON.stringify(purchase.billingAddress.country));
+    purchase.billingAddress.country = billingCountry.name;
+
+    purchase.order = order;
+    purchase.orderItems = orderItems;
+
+    this.checkoutService.placeOrder(purchase).subscribe({
+      next: response => {
+        alert(`Your order has been received.\nOrder Tracking Number: ${response.orderTrackingNumber}`)
+        this.resetCart();
+      },
+      error: err => {
+        alert(`There was an error: ${err.message}`);
+      }
+    });
+
+  }
+
+  resetCart() {
+    this.cartService.cartItems = [];
+    this.cartService.totalPrice.next(0);
+    this.cartService.totalQuantity.next(0);
+
+    this.checkoutFormGroup.reset();
+
+    this.router.navigateByUrl("/products");
   }
 
   copyShippingAddressToBillingAddress(event: any) {
