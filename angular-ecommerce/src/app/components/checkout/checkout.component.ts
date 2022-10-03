@@ -4,12 +4,14 @@ import { Router } from '@angular/router';
 import { Country } from 'src/app/common/country';
 import { Order } from 'src/app/common/order';
 import { OrderItem } from 'src/app/common/order-item';
+import { PaymentInfo } from 'src/app/common/payment-info';
 import { Purchase } from 'src/app/common/purchase';
 import { State } from 'src/app/common/state';
 import { CartService } from 'src/app/services/cart.service';
 import { CheckoutService } from 'src/app/services/checkout.service';
 import { ECommerceFormService } from 'src/app/services/ecommerce-form.service';
 import { CustomValidators } from 'src/app/validators/custom-validators';
+import { environment } from 'src/environments/environment';
 
 @Component({
   selector: 'app-checkout',
@@ -30,6 +32,14 @@ export class CheckoutComponent implements OnInit {
   billingAddressStates: State[] = [];
   storage: Storage = sessionStorage;
   
+  stripe = Stripe(environment.stripePublishableKey);
+
+  paymentInfo: PaymentInfo = new PaymentInfo();
+  cardElement: any;
+  displayError: any = "";
+
+  isDisabled: boolean = false;
+
   constructor(private formBuilder : FormBuilder,
               private eCommerceFormService: ECommerceFormService,
               private cartService: CartService,
@@ -37,6 +47,8 @@ export class CheckoutComponent implements OnInit {
               private router: Router) { }
 
   ngOnInit(): void {
+    this.setUpStripePaymentForm();
+    
     const theEmail = JSON.parse(this.storage.getItem('userEmail')!);
     this.checkoutFormGroup = this.formBuilder.group({
       customer: this.formBuilder.group({
@@ -100,6 +112,7 @@ export class CheckoutComponent implements OnInit {
                                     CustomValidators.notOnlyWhileSpace])
       }),
       creditCard: this.formBuilder.group({
+        /*
         cardType: new FormControl('', 
                                     [Validators.required]),
 
@@ -116,23 +129,44 @@ export class CheckoutComponent implements OnInit {
                                          Validators.pattern('[0-9]{3}')]),
         expirationMonth: [''],
         expirationYear: ['']
+        */
       })
     });
 
-    const startMonth: number = new Date().getMonth() + 1;
-    this.eCommerceFormService.getCreditCardMonths(startMonth).subscribe(
-      data => this.creditCardMonths = data
-    );
+    // const startMonth: number = new Date().getMonth() + 1;
+    // this.eCommerceFormService.getCreditCardMonths(startMonth).subscribe(
+    //   data => this.creditCardMonths = data
+    // );
 
-    this.eCommerceFormService.getCreditCardYears().subscribe(
-      data => this.creditCardYears = data
-    );
+    // this.eCommerceFormService.getCreditCardYears().subscribe(
+    //   data => this.creditCardYears = data
+    // );
 
     this.eCommerceFormService.getCountries().subscribe(
       data => this.countries = data
     );
 
     this.reviewCartDetails();
+  }
+
+  setUpStripePaymentForm() {
+    
+    var elements = this.stripe.elements();
+
+    this.cardElement = elements.create('card', { hidePostalCode: true});
+
+    this.cardElement.mount('#card-element');
+
+    this.cardElement.on('change', (event: any) => {
+      this.displayError = document.getElementById('card-errors');
+
+      if(event.complete) {
+        this.displayError.textContent = "";
+      } else if (event.error) {
+        this.displayError.textContent = event.error.message;
+      }
+    });
+
   }
   
   get firstName() { return this.checkoutFormGroup.get('customer.firstName'); }
@@ -188,30 +222,78 @@ export class CheckoutComponent implements OnInit {
     purchase.order = order;
     purchase.orderItems = orderItems;
 
+    this.paymentInfo.amount = Math.round(this.totalPrice * 100);
+    this.paymentInfo.currency = 'USD';
+    this.paymentInfo.receiptEmail = purchase.customer.email;
+
+    if(!this.checkoutFormGroup.invalid && this.displayError.textContent === "") {
+      this.isDisabled = true;
+      this.checkoutService.createPaymentIntent(this.paymentInfo).subscribe(
+        (paymentIntentResponse) => {
+          this.stripe.confirmCardPayment(paymentIntentResponse.client_secret, 
+            {
+              payment_method: {
+                card: this.cardElement,
+                billing_details: {
+                  email: purchase.customer.email,
+                  name: `${purchase.customer.firstName} ${purchase.customer.lastName}`,
+                  address: {
+                    line1: purchase.billingAddress.street,
+                    city: purchase.billingAddress.city,
+                    state: purchase.billingAddress.state,
+                    postal_code: purchase.billingAddress.zipCode,
+                    country: this.billingAddressCountry?.value.code
+                  }
+                }
+              }
+            }, {handleActions: false})
+            .then(function(this: CheckoutComponent, result: any) {
+              if (result.error) {
+                alert(`There was an error: ${result.error}`)
+                this.isDisabled = true;
+              } else {
+                this.placeOrder(purchase);
+                this.isDisabled = true;
+              }
+            }.bind(this));          
+        }
+      );
+    } else {
+      this.checkoutFormGroup.markAllAsTouched();
+    }
+
+    // this.checkoutService.placeOrder(purchase).subscribe({
+    //   next: response => {
+    //     alert(`Your order has been received.\nOrder Tracking Number: ${response.orderTrackingNumber}`)
+    //     this.resetCart();
+    //   },
+    //   error: err => {
+    //     alert(`There was an error: ${err.message}`);
+    //   }
+    // });
+
+  }
+
+  placeOrder(purchase: Purchase) {
     this.checkoutService.placeOrder(purchase).subscribe({
       next: response => {
         alert(`Your order has been received.\nOrder Tracking Number: ${response.orderTrackingNumber}`)
         this.resetCart();
+        
       },
       error: err => {
         alert(`There was an error: ${err.message}`);
       }
-    });
-
+    })
   }
 
   resetCart() {
     this.cartService.cartItems = [];
     this.cartService.totalPrice.next(0);
     this.cartService.totalQuantity.next(0);
+    this.cartService.persistCartItems();
 
     this.checkoutFormGroup.reset();
-
-    const theEmail = this.storage.getItem('userEmail');
-    
-    this.storage.clear();
-
-    this.storage.setItem('userEmail', theEmail!);
 
     this.router.navigateByUrl("/products");
   }
