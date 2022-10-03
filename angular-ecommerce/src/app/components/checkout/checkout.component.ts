@@ -28,6 +28,7 @@ export class CheckoutComponent implements OnInit {
   countries: Country[] = [];
   shippingAddressStates: State[] = [];
   billingAddressStates: State[] = [];
+  storage: Storage = sessionStorage;
   
   constructor(private formBuilder : FormBuilder,
               private eCommerceFormService: ECommerceFormService,
@@ -36,7 +37,7 @@ export class CheckoutComponent implements OnInit {
               private router: Router) { }
 
   ngOnInit(): void {
-    
+    const theEmail = JSON.parse(this.storage.getItem('userEmail')!);
     this.checkoutFormGroup = this.formBuilder.group({
       customer: this.formBuilder.group({
         firstName: new FormControl('', 
@@ -49,7 +50,7 @@ export class CheckoutComponent implements OnInit {
                                      Validators.minLength(2),
                                      CustomValidators.notOnlyWhileSpace]),
 
-        email: new FormControl('', 
+        email: new FormControl(theEmail, 
                                  [Validators.required, 
                                   Validators.pattern('^[a-z0-9._%+-]+@[a-z0-9.-]+\\.[a-z]{2,4}$')])
 
@@ -156,7 +157,7 @@ export class CheckoutComponent implements OnInit {
   get creditCardSecurityCode() { return this.checkoutFormGroup.get('creditCard.securityCode'); }
   
   onSubmit() {
-    
+
     if(this.checkoutFormGroup.invalid) {
       this.checkoutFormGroup.markAllAsTouched();
       return;
@@ -206,6 +207,12 @@ export class CheckoutComponent implements OnInit {
 
     this.checkoutFormGroup.reset();
 
+    const theEmail = this.storage.getItem('userEmail');
+    
+    this.storage.clear();
+
+    this.storage.setItem('userEmail', theEmail!);
+
     this.router.navigateByUrl("/products");
   }
 
@@ -245,8 +252,7 @@ export class CheckoutComponent implements OnInit {
     const formGroup = this.checkoutFormGroup.get(formGroupName);
 
     const countryCode = formGroup?.value.country.code;
-    const countryName = formGroup?.value.country.name;
-
+    
     this.eCommerceFormService.getStates(countryCode).subscribe(
       data => {
         if(formGroupName === 'shippingAddress') {
